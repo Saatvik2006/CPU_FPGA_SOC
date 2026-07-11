@@ -1,0 +1,21 @@
+# Verilator
+obj_dir/
+
+# datasets
+datasets/*.log
+
+# executables
+*.out
+*.exe
+
+# object files
+*.o
+*.d
+*.a
+
+# editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store

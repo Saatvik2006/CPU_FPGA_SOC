@@ -1,0 +1,2 @@
+Implementation,Dataset_Size_MB,Records_Parsed,Elapsed_Time_s,Records_per_Second,Throughput_MBps,Notes
+FPGA Parser (Verilator Simulation),160.04,1568167,14.4924,108207,11.043,"Character-by-character Verilator simulation. Includes file I/O, parser evaluation, output marshaling, and vector storage."
