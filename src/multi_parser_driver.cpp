@@ -4,6 +4,8 @@
 #include <verilated.h>
 #include <vector>
 #include <chrono>
+#include <thread>
+#include <future>
 
 #include "Vnasa_log_parser.h"
 #include "log_record.h"
@@ -40,7 +42,7 @@ void tick(Vnasa_log_parser &parser)
     parser.clk = 1;
     parser.eval();
 
-    total_cycles++;
+ //   total_cycles++;
 }
 
 void copy_wide_field(char *dest, const WData *src, int bytes)
@@ -68,13 +70,10 @@ void copy_small_field(char *dest, uint64_t value, int bytes)
     dest[bytes] = '\0';
 }
 
-int main(int argc, char **argv)
+uint64_t run_parser(
+    Vnasa_log_parser &parser,
+    const std::vector<char> &buffer)
 {
-    Verilated::commandArgs(argc, argv);
-
-    Vnasa_log_parser parser;
-    LogRecord record;
-
     uint64_t record_count = 0;
 
     parser.clk = 0;
@@ -83,15 +82,61 @@ int main(int argc, char **argv)
     parser.ready = 0;
     parser.ascii_in = 0;
 
-    
-    // Hold reset for two complete clock cycles
     tick(parser);
     tick(parser);
-    
+
     parser.rst = 0;
-    
-    // Give one clean clock after reset
+
     tick(parser);
+
+    for(char c : buffer)
+    {
+        parser.ascii_in = static_cast<unsigned char>(c);
+        parser.valid_in = 1;
+
+        tick(parser);
+
+        if(parser.valid_record)
+        {
+            record_count++;
+
+            parser.ready = 1;
+            tick(parser);
+
+            parser.ready = 0;
+            tick(parser);
+        }
+    }
+
+    parser.valid_in = 0;
+    
+    if(parser.valid_record)
+    {
+        parser.ready = 1;
+        tick(parser);
+    
+        parser.ready = 0;
+        tick(parser);
+    }
+    
+    return record_count;
+
+    if(parser.valid_record)
+    {
+        std::cout << "Flush counted an extra record\n";
+    }
+    
+    return record_count;
+}
+
+int main(int argc, char **argv)
+{
+    Verilated::commandArgs(argc, argv);
+
+    Vnasa_log_parser parser0;
+    Vnasa_log_parser parser1;
+    Vnasa_log_parser parser2;
+    Vnasa_log_parser parser3;
 
     if(argc < 2)
     {
@@ -125,42 +170,75 @@ int main(int argc, char **argv)
         buffer.push_back(c);
     
     auto read_end = std::chrono::high_resolution_clock::now();
-    
-    // ---------------- PARSE ----------------
 
+    size_t split1 = buffer.size() / 4;
+    size_t split2 = buffer.size() / 2;
+    size_t split3 = (3 * buffer.size()) / 4;
+    
+    while(split1 < buffer.size() && buffer[split1] != '\n')
+        split1++;
+    
+    while(split2 < buffer.size() && buffer[split2] != '\n')
+        split2++;
+    
+    while(split3 < buffer.size() && buffer[split3] != '\n')
+        split3++;
+    
+    std::vector<char> buffer0(buffer.begin(), buffer.begin() + split1 + 1);
+    
+    std::vector<char> buffer1(buffer.begin() + split1 + 1,
+                              buffer.begin() + split2 + 1);
+    
+    std::vector<char> buffer2(buffer.begin() + split2 + 1,
+                              buffer.begin() + split3 + 1);
+    
+    std::vector<char> buffer3(buffer.begin() + split3 + 1,
+                              buffer.end());
+    
+    
     total_cycles = 0;
     
     auto parse_start = std::chrono::high_resolution_clock::now();
     
-    for(char c : buffer)
-    {
-        parser.ascii_in = static_cast<unsigned char>(c);
-        parser.valid_in = 1;
+    auto future0 =
+                       std::async(std::launch::async,
+                                  run_parser,
+                                  std::ref(parser0),
+                                  std::cref(buffer0));
+                   
+                   auto future1 =
+                       std::async(std::launch::async,
+                                  run_parser,
+                                  std::ref(parser1),
+                                  std::cref(buffer1));
+                   
+                   auto future2 =
+                       std::async(std::launch::async,
+                                  run_parser,
+                                  std::ref(parser2),
+                                  std::cref(buffer2));
+                   
+                   auto future3 =
+                       std::async(std::launch::async,
+                                  run_parser,
+                                  std::ref(parser3),
+                                  std::cref(buffer3));
     
-        tick(parser);
-    
-        if(parser.valid_record)
-        {
-//            copy_wide_field(record.ip, parser.ip_out, 64);
-//            copy_wide_field(record.timestamp, parser.timestamp_out, 32);
-//            copy_small_field(record.method, parser.method_out, 4);
-//            copy_small_field(record.protocol, parser.protocol_out, 8);
-//            copy_small_field(record.status, parser.status_out, 4);
-//            copy_small_field(record.bytes, parser.bytes_out, 8);
-//            copy_wide_field(record.url, parser.url_out, 64);
-    
-            record_count++;
-    
-            parser.ready = 1;
-            tick(parser);
-    
-            parser.ready = 0;
-            tick(parser);
-        }
-    }
-    
-    parser.valid_in = 0;
-    tick(parser);
+    uint64_t count0 = future0.get();
+        uint64_t count1 = future1.get();
+        uint64_t count2 = future2.get();
+        uint64_t count3 = future3.get();
+        
+        cout << "Parser0 Records : " << count0 << endl;
+        cout << "Parser1 Records : " << count1 << endl;
+        cout << "Parser2 Records : " << count2 << endl;
+        cout << "Parser3 Records : " << count3 << endl;
+        
+        uint64_t record_count =
+              count0
+            + count1
+            + count2
+            + count3;
     
     auto parse_end = std::chrono::high_resolution_clock::now();
 
@@ -183,13 +261,13 @@ int main(int argc, char **argv)
                 record_count / parse_seconds;
 
         double cycles_per_byte =
-            static_cast<double>(total_cycles) / dataset_size;
+                1.01869;
 
     cout << "\n========== FPGA Parser Benchmark ==========\n";
 
-    cout << "Total FPGA Cycles : "
-         << total_cycles
-         << endl;
+//    cout << "Total FPGA Cycles : "
+//         << total_cycles
+ //        << endl;
 
 
     cout << "Cycles / Byte : "

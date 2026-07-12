@@ -5,7 +5,7 @@
 #include <vector>
 #include <chrono>
 
-#include "Vnasa_log_parser.h"
+#include "Vdual_nasa_log_parser.h"
 #include "log_record.h"
 
 
@@ -32,7 +32,7 @@ Clock::time_point export_end;
 
 uint64_t total_cycles = 0;
 
-void tick(Vnasa_log_parser &parser)
+void tick(Vdual_nasa_log_parser &parser)
 {
     parser.clk = 0;
     parser.eval();
@@ -72,17 +72,20 @@ int main(int argc, char **argv)
 {
     Verilated::commandArgs(argc, argv);
 
-    Vnasa_log_parser parser;
+    Vdual_nasa_log_parser parser;
     LogRecord record;
 
     uint64_t record_count = 0;
 
     parser.clk = 0;
     parser.rst = 1;
-    parser.valid_in = 0;
-    parser.ready = 0;
-    parser.ascii_in = 0;
-
+    parser.valid0_in = 0;
+    parser.ready0 = 0;
+    parser.ascii0_in = 0;
+    
+    parser.valid1_in = 0;
+    parser.ready1 = 0;
+    parser.ascii1_in = 0;
     
     // Hold reset for two complete clock cycles
     tick(parser);
@@ -125,6 +128,14 @@ int main(int argc, char **argv)
         buffer.push_back(c);
     
     auto read_end = std::chrono::high_resolution_clock::now();
+
+    size_t split = dataset_size / 2;
+    
+    while (split < buffer.size() && buffer[split] != '\n')
+        split++;
+    
+    std::vector<char> buffer0(buffer.begin(), buffer.begin() + split);
+    std::vector<char> buffer1(buffer.begin() + split, buffer.end());
     
     // ---------------- PARSE ----------------
 
@@ -132,34 +143,69 @@ int main(int argc, char **argv)
     
     auto parse_start = std::chrono::high_resolution_clock::now();
     
-    for(char c : buffer)
+    size_t i0 = 0;
+    size_t i1 = 0;
+    
+    while(i0 < buffer0.size() || i1 < buffer1.size())
     {
-        parser.ascii_in = static_cast<unsigned char>(c);
-        parser.valid_in = 1;
+        //---------------- Parser 0 ----------------
+    
+        if(i0 < buffer0.size())
+        {
+            parser.ascii0_in = static_cast<unsigned char>(buffer0[i0++]);
+            parser.valid0_in = 1;
+        }
+        else
+        {
+            parser.valid0_in = 0;
+        }
+    
+        //---------------- Parser 1 ----------------
+    
+        if(i1 < buffer1.size())
+        {
+            parser.ascii1_in = static_cast<unsigned char>(buffer1[i1++]);
+            parser.valid1_in = 1;
+        }
+        else
+        {
+            parser.valid1_in = 0;
+        }
+    
+        //---------------- One FPGA clock ----------------
     
         tick(parser);
     
-        if(parser.valid_record)
-        {
-//            copy_wide_field(record.ip, parser.ip_out, 64);
-//            copy_wide_field(record.timestamp, parser.timestamp_out, 32);
-//            copy_small_field(record.method, parser.method_out, 4);
-//            copy_small_field(record.protocol, parser.protocol_out, 8);
-//            copy_small_field(record.status, parser.status_out, 4);
-//            copy_small_field(record.bytes, parser.bytes_out, 8);
-//            copy_wide_field(record.url, parser.url_out, 64);
+        //---------------- Parser 0 Output ----------------
     
+        if(parser.valid0_record)
+        {
             record_count++;
     
-            parser.ready = 1;
+            parser.ready0 = 1;
             tick(parser);
     
-            parser.ready = 0;
+            parser.ready0 = 0;
+        }
+    
+        //---------------- Parser 1 Output ----------------
+    
+        if(parser.valid1_record)
+        {
+            record_count++;
+    
+            parser.ready1 = 1;
             tick(parser);
+    
+            parser.ready1 = 0;
         }
     }
     
-    parser.valid_in = 0;
+    parser.valid0_in = 0;
+    parser.valid1_in = 0;
+    
+    tick(parser);
+   
     tick(parser);
     
     auto parse_end = std::chrono::high_resolution_clock::now();
